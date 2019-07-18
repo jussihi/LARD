@@ -1,0 +1,177 @@
+\documentclass{article}
+\begin{document}
+\title{%
+		The $LARD$ file system \\
+		\large Lazy Arrangements, Real Deficiencies}
+% \author{H ac ker m an}
+\author{Mikael Heino}
+\date{\today}
+
+\maketitle
+
+\section{Introduction}
+LARDfs (Lazy Arrangements, Real Deficiencies) is a barebones file system.
+The goal is to provide the most basic interface for creating and reading files and directories.
+To achieve this goal a very naive approach is taken to cut corners when it comes to design.
+This means performance and efficiency take the back seat.
+\subsection{Motivation}
+Originally I wanted to create a simple read-only FAT driver, but since that is mostly just copying existing code I decided to try something more ambitious.
+The name I naturally wanted to refer to FAT, but worse.
+Inspiration has been drawn from all over the place, as well some own ideas, which may or may not already be in use somewhere already.
+I just don't know about them because I haven't done enough research.
+
+\subsection{How to use}
+If you are lucky, you can just issue $make$ to build everything, or build the tools and driver manually.
+The driver sources are under the $fs$ directory under the main project directory and the user space tools are under $tools$ directory.
+To compile the driver you must acquire the headers for your current kernel.\newline
+Compile the module:
+\vspace{0.15cm}
+\newline
+\fbox{\begin{minipage}{30em}
+\$ make -C /lib/modules/\$(uname -r)/build M=\$(pwd) modules
+\end{minipage}}
+\vspace{0.15cm}
+\newline
+If you wish to build a debug driver, add the make variable -ODEBUG
+\newline
+Load the module:
+\vspace{0.15cm}
+\newline
+\fbox{\begin{minipage}{30em}
+\$ sudo insmod lard.ko
+\end{minipage}}
+\vspace{0.15cm}
+\newline
+Create a filesystem image:
+\vspace{0.15cm}
+\newline
+\fbox{\begin{minipage}{30em}
+\$ touch lard\_volume.img; truncate -s 128M lard\_volume.img; mklardfs lard\_volume.img
+\end{minipage}}
+\vspace{0.15cm}
+\newline
+Mount the volume (ensure available loop devices are available unless using a real block device):
+\vspace{0.15cm}
+\newline
+\fbox{\begin{minipage}{30em}
+\$ sudo mount -t lard -o loop ./lard\_volume.img /mnt/testrun
+\end{minipage}}
+\vspace{0.15cm}
+\newline
+Errors are reported in dmesg prefixed with '[LARD Error]: message'.
+
+\section{Specification}
+The on-disk layout is intentionally kept as simple and convenient as possible.
+The disk is split into 4096 byte sized BLOBs of LARD (or clusters as used in other file systems).
+BLOBs themselves are identified and their allocation status is tracked using a special BLOBMAP.
+A single bit corresponds to a BLOB number on the disk, with a special zone marked into the boot sector and superblock structures, so we don't
+try to allocate BLOBs for anything else from there.
+\newline
+The disk has three 'special' zones.
+The first zone is the boot sector and necessary superblock structures that need to be stored on disk.
+The second zone is the special BLOBMAP which is used to allocate and track individual BLOBs.
+The third zone is the BLOB zone, where the files and data is stored.
+\newline
+Each allocated BLOB has a special 'BLOB Header' which specifies what type of (meta)data is associated with that particular BLOB.
+This allows us to explicitly find any arbitrary BLOB from any BLOB by just pointing to indices in the BLOBMAP.
+\vspace{0.15cm}
+\newline
+{\large BLOB types}
+\newline
+\fbox{\begin{minipage}{30em}
+typedef uint8\_t BLOB\_TYPE
+\newline
+BLOB\_TYPE DATA 0x0
+\newline
+BLOB\_TYPE FILE 0x1
+\newline
+BLOB\_TYPE DIR 0x2
+\end{minipage}}
+\vspace{0.15cm}
+\newline
+{\large BLOB Header}
+\vspace{0.15cm}
+\newline
+\fbox{\begin{minipage}{30em}
+BLOB\_TYPE type
+\newline
+BMI parent
+\newline
+BMI child
+\end{minipage}}
+\vspace{0.15cm}
+\newline
+Each BLOB must contain as little metadata as possible, so we have as much space for the payload.
+The payload will normally be mostly file data anyway.
+Metadata also adds complexity and we want to stay away from that.
+Sane filesystems would not even consider adding headers to chunks of data.
+Files themselves have an offset attribute to the first BLOB number where the data starts, and subsequent data BLOBs point to the next data BLOB.
+\newline
+Fragmentation is probably going to be an issue.
+Possible solutions are:
+\newline
+\#1 - Online defragmentation daemon (really complicated to implement)
+\newline
+\#2 - Offline defragmentation tool that is run before mounting. (possible to implement)
+\newline
+\#3 - Preallocate like a madmachine, then free preallocations if they aren't needed. (feasible to implement)
+\newline
+If you aren't familiar with the severity of fragmentation, a fragmented file system will become almost completely unusable due to the slowness.
+
+\subsection{Boot Sector and Superblock}
+The superblock structure has all the data relevant to the volume: sector size, volume size and root inode.
+
+\subsection{Inode handling}
+Inodes are essentially entries in the BLOBMAP.
+Each BLOBMAP bit corresponds to an inode, which can be either a FILE inode, DIR inode or DATA inode.
+
+File and directory lookup begins from the root directory.
+This may change, however bigger file systems with deep directory structures will become almost unbearably slow to use.
+Countering this could be solved with a cache of recently used directories, since traversing directories works both ways.
+You can have a reference number to a dir blob located somewhere deep in the file system, seek to it, and start walking the directories deeper.
+\subsubsection{File blob}
+\vspace{0.3cm}
+\fbox{\begin{minipage}{33em}
+BLOB\_HEADER
+\newline
+---------------
+\newline
+char name[MAX\_NAMELEN]
+\newline
+uint32\_t allocated\_space
+\newline
+BLOB\_NUMBER data
+\newline
+void data
+\newline
+\end{minipage}}
+
+\subsubsection{Directory blob}
+\vspace{0.3cm}
+\fbox{\begin{minipage}{33em}
+BLOB\_HEADER
+\newline
+---------------
+\newline
+char name[MAX\_NAMELEN]
+\newline
+uint32\_t num\_entries
+\newline
+BLOB\_NUMBER directory\_contents[112]
+\newline
+\end{minipage}}
+\subsubsection{Data blob}
+\vspace{0.3cm}
+\fbox{\begin{minipage}{33em}
+BLOB\_HEADER
+\newline
+---------------
+\newline
+void data
+\newline
+\end{minipage}}
+
+\subsection{Failsafety strategy}
+Every BLOB header specifies a parent and a child. This allows us to determine if a BLOB is orphaned, by recursively traversing back and forth using the parent and child entries.
+
+\end{document}

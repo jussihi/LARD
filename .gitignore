@@ -1,0 +1,17 @@
+material/*
+testing/*
+modules.order
+Module.symvers
+doc/*.aux
+doc/*.log
+fs/modules.order
+fs/Module.symvers
+fs/*.mod*
+fs/*.o
+fs/*.ko
+fs/*.tmp
+fs/*.swp
+fs/*.cmd
+fs/*.out
+tools/*.o
+tools/*.out
